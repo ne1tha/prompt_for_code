@@ -1,0 +1,24 @@
+# === Python ===
+venv/
+.env
+*.pyc
+__pycache__/
+*.so
+.Python
+pip-log.txt
+
+vue-knowledge-base/node_modules/
+vue-knowledge-base/npm-debug.log*
+vue-knowledge-base/yarn-debug.log*
+vue-knowledge-base/yarn-error.log*
+vue-knowledge-base/dist/
+vue-knowledge-base/build/
+
+vue-knowledge-base/.vscode/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+.DS_Store
+Thumbs.db
