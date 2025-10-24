@@ -11,42 +11,41 @@
         :disabled="isGenerating"
       />
       <div class="query-actions">
-        <!-- 修复一: 合并模式切换按钮到此 -->
         <el-button 
-          @click="handleModeToggleClick"
+          @click="handleSelectKBClick"
           :disabled="isGenerating"
         >
-          {{ modeToggleButtonText }}
+           {{ store.promptModeTable === 'kb' ? '关闭知识库选择' : '选择知识库' }}
+        </el-button>
+        <el-button 
+          @click="handleSelectModelClick"
+          :disabled="isGenerating"
+        >
+          选择模型
         </el-button>
 
-        <!-- 修复三: 新增控制右侧面板显示的按钮 -->
+          <!-- 修复三: 新增控制右侧面板显示的按钮 -->
         <el-button
-          @click="toggleContextPanel"
-          :disabled="retrievedContexts.length === 0"
+            @click="toggleContextPanel"
+            :disabled="retrievedContexts.length === 0"
         >
-          {{ isContextPanelVisible ? '隐藏相关信息' : '显示相关信息' }}
+            {{ isContextPanelVisible ? '隐藏相关信息' : '显示相关信息' }}
         </el-button>
-        
+          
         <el-button 
-          type="primary" 
-          :disabled="isGenerateDisabled"
-          :loading="isGenerating"
-          @click="handleGenerate"
+            type="primary" 
+            :disabled="isGenerateDisabled"
+            :loading="isGenerating"
+            @click="handleGenerate"
         >
-          {{ isGenerating ? '检索中...' : '检索增强' }}
+            {{ isGenerating ? '检索中...' : '检索增强' }}
         </el-button>
       </div>
     </div>
 
+
     <!-- 配置信息显示 -->
     <div class="config-display">
-      <div class="config-item">
-        <span class="label">检索模式:</span>
-        <el-tag type="primary">
-          搜索增强
-        </el-tag>
-        <span class="hint">仅检索相关知识，不调用生成模型</span>
-      </div>
       
        <div class="config-item">
         <span class="label">当前模型:</span>
@@ -73,19 +72,14 @@
     </div>
 
     <!-- 修复二: 主内容区改为左右布局 -->
-    <div class="main-content-area">
+    <div 
+      class="main-content-area"
+      :class="{ 'visible': isContextPanelVisible && retrievedContexts.length > 0 }"
+    >
       <!-- 左侧: 生成结果区域 -->
       <div class="result-panel">
         <div class="result-section">
-          <el-alert
-            v-if="selectedKBs.length === 0"
-            title="请先选择知识库"
-            type="warning"
-            :closable="false"
-            show-icon
-          />
-          
-          <div v-else class="generated-content">
+          <div class="generated-content">
             <div class="result-header">
               <h4>增强后的提示词:</h4>
               <el-button 
@@ -184,14 +178,8 @@ const similarityThreshold = ref(0.3);
 const isContextPanelVisible = ref(true); // 右侧面板是否可见
 
 // 从 Store 获取状态
-const promptModeTable = computed(() => store.promptModeTable);
 const selectedModel = computed(() => store.promptSelectedModel);
 const selectedKBs = computed(() => store.promptSelection);
-
-// 计算属性
-const modeToggleButtonText = computed(() => {
-  return promptModeTable.value === 'kb' ? '选择模型' : '选择知识库';
-});
 
 const isGenerateDisabled = computed(() => {
   return selectedKBs.value.length === 0 || 
@@ -199,13 +187,18 @@ const isGenerateDisabled = computed(() => {
          isGenerating.value;
 });
 
-// 方法
-const handleModeToggleClick = () => {
-  if (promptModeTable.value === 'kb') {
-    store.setPromptModeTable('model');
+const handleSelectKBClick = () => {
+  if (store.promptModeTable === 'kb') {
+    // 如果当前显示知识库表，则关闭它
+    store.setPromptModeTable('hidden');
   } else {
+    // 否则打开知识库表
     store.setPromptModeTable('kb');
   }
+};
+
+const handleSelectModelClick = () => {
+  store.setPromptModeTable('model');
 };
 
 const toggleContextPanel = () => {
@@ -229,7 +222,7 @@ const handleCopyAnswer = async () => {
 
 const handleGenerate = async () => {
   if (isGenerateDisabled.value) return;
-  
+  store.setPromptModeTable('hidden');
   isGenerating.value = true;
   generatedContent.value = '';
   retrievedContexts.value = [];
@@ -305,17 +298,23 @@ onMounted(() => {
   box-sizing: border-box;
 }
 
-/* 查询区域 */
 .query-section {
   display: flex;
   flex-direction: column;
   gap: 12px;
   flex-shrink: 0;
 }
-
 .query-input :deep(.el-textarea__inner) {
   font-size: 14px;
   line-height: 1.5;
+}
+
+/* 按钮组样式 - 添加间隙和布局 */
+.query-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-start;
+  flex-wrap: wrap;
 }
 
 .query-actions {

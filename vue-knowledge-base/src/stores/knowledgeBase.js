@@ -506,6 +506,98 @@ async function reuploadFile(id, file) {
   function setPromptModeTable(mode) { // 'kb' or 'model'
     promptModeTable.value = mode;
   }
+
+
+async function generateSummary(kbId, generationModelId, embeddingModelId) {
+    error.value = null;
+    try {
+      const response = await fetch(`${API_BASE_URL}/knowledgebases/${kbId}/generate-summary`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ // 匹配 API (schemas/knowledgebase.py)
+          generation_model_id: generationModelId,
+          embedding_model_id: embeddingModelId
+        }) 
+      });
+
+      // 使用您已有的健壮的响应处理器
+      const newL2aKb = await handleResponse(response);
+      
+      // (!! 关键 !!) 后端返回了新创建的 L2a 知识库对象
+      // 我们需要将这个新对象添加到列表中
+      
+      // (复制 createKnowledgeBase 中的时间戳处理逻辑)
+      if (newL2aKb.updatedAt) {
+        const backendDate = new Date(newL2aKb.updatedAt);
+        const isLikelyUSTimezone = backendDate.getTimezoneOffset() > 240;
+        if (isLikelyUSTimezone) {
+          const localDate = new Date(backendDate.getTime() + (backendDate.getTimezoneOffset() * 60000));
+          newL2aKb.updatedAt = localDate.toISOString();
+        }
+      }
+      
+      knowledgeBaseList.value.push(newL2aKb); // 添加到列表
+
+      // (!! 关键 !!) L2a 摘要需要摄取，所以后端返回 "processing"
+      // 我们需要像 createKnowledgeBase 一样为这个*新*ID启动轮询
+      if (newL2aKb.status === 'processing' || 
+          (newL2aKb.parsingState && 
+           (newL2aKb.parsingState.stage === 'parsing' || 
+            newL2aKb.parsingState.stage === 'pending' || 
+            newL2aKb.parsingState.stage === 'picking_model'))) {
+        _pollParsingStatus(newL2aKb.id); //
+      }
+      
+      return newL2aKb; // 返回新创建的对象
+
+    } catch (err) {
+      error.value = err.message;
+      throw err;
+    }
+  }
+
+  /**
+   * (!! 新增 !!) 调用 L2b 知识图谱生成 API
+   */
+  async function generateGraph(kbId, generationModelId) {
+    error.value = null;
+    try {
+      const response = await fetch(`${API_BASE_URL}/knowledgebases/${kbId}/generate-graph`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ // 匹配 API (schemas/knowledgebase.py)
+          generation_model_id: generationModelId
+        }) 
+      });
+
+      const newL2bKb = await handleResponse(response);
+      
+      // (!! 关键 !!) 后端返回了新创建的 L2b 知识库对象
+      
+      // (复制 createKnowledgeBase 中的时间戳处理逻辑)
+      if (newL2bKb.updatedAt) {
+        const backendDate = new Date(newL2bKb.updatedAt);
+        const isLikelyUSTimezone = backendDate.getTimezoneOffset() > 240;
+        if (isLikelyUSTimezone) {
+          const localDate = new Date(backendDate.getTime() + (backendDate.getTimezoneOffset() * 60000));
+          newL2bKb.updatedAt = localDate.toISOString();
+        }
+      }
+      console.log('[DEBUG generateGraph] 收到并即将推入列表的对象:', JSON.stringify(newL2bKb, null, 2));
+      
+      knowledgeBaseList.value.push(newL2bKb); // 添加到列表
+
+      // (!! 注意 !!) L2b 生成是同步的，*不*需要轮询
+      
+      return newL2bKb; // 返回新创建的对象
+
+    } catch (err) {
+      error.value = err.message;
+      throw err;
+    }
+  }
+
+
   return {
     // --- State ---
     knowledgeBaseList, 
@@ -534,6 +626,8 @@ async function reuploadFile(id, file) {
     createKnowledgeBase, 
     deleteKnowledgeBase,
     _updateKBState,
-    reuploadFile
+    reuploadFile,
+    generateSummary,
+    generateGraph
   }
 })

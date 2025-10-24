@@ -82,14 +82,14 @@ const tableRef = ref(null);
 const tableData = computed(() => {
   let list;
   if (props.headerMode === 'full') {
-    list = store.filteredKnowledgeBaseList;
+    // 过滤掉知识库图谱
+    list = store.filteredKnowledgeBaseList.filter(item => item.kbType !== 'l2b_graph');
   } else {
-    // (!! 修改 !!) Prompt 模式也使用 filteredList
-    list = store.filteredKnowledgeBaseList; 
+    // (!! 修改 !!) Prompt 模式也使用 filteredList，并过滤掉知识库图谱
+    list = store.filteredKnowledgeBaseList.filter(item => item.kbType !== 'l2b_graph'); 
     if (props.activeMenu === 'prompt') {
       list = list.filter(item => item.status === 'ready');
     }
-
   }
 
   

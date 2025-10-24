@@ -26,13 +26,12 @@
         <!-- 修复：重新组织显示逻辑 -->
         <div class="button-group" v-if="shouldShowActionButtons">
           <el-button 
-            v-if="store.selectedKnowledgeBase.status === 'ready'"
+            v-if="shouldShowRegenerateButton"
             plain 
             @click="$emit('openRegenerateModal')"
           >
             再生成子知识库
           </el-button>
-
           <el-button 
             v-if="shouldShowParseButton"
             plain 
@@ -183,16 +182,49 @@ const isParsingInProgress = computed(() => {
 // 修复：简化显示逻辑
 const shouldShowActionButtons = computed(() => {
   const stage = parsingState.value.stage;
-  return stage === 'idle' || stage === 'complete' || stage === 'error' || stage === 'cancelled';
+  const result = stage === 'idle' || stage === 'complete' || stage === 'error' || stage === 'cancelled';
+  
+  console.log(`[RightPanel] 是否显示操作按钮:`, {
+    kbId: store.selectedKnowledgeBase?.id,
+    parsingStage: stage,
+    result
+  });
+  
+  return result;
 });
-
 const shouldShowParseButton = computed(() => {
   const kb = store.selectedKnowledgeBase;
   const stage = parsingState.value.stage;
-  return kb && kb.status !== 'ready' && kb.sourceFilePath && 
-         (stage === 'idle' || stage === 'error' || stage === 'cancelled');
+  const result = (kb && kb.sourceFilePath && stage === 'cancelled') || (kb.status !== 'ready' && kb.sourceFilePath && 
+         (stage === 'idle' || stage === 'error'));
+  
+  console.log(`[RightPanel] 是否显示重新解析按钮:`, {
+    kbId: kb?.id,
+    kbName: kb?.name,
+    parsingStage: stage,
+    result
+  });
+  
+  return result;
 });
 
+const shouldShowRegenerateButton = computed(() => {
+  const kb = store.selectedKnowledgeBase;
+  const stage = parsingState.value.stage;
+  
+  // 只有在就绪状态且不是取消状态时才显示再生成按钮
+  const result = kb && kb.status === 'ready' && stage !== 'cancelled';
+  
+  console.log(`[RightPanel] 是否显示再生成按钮:`, {
+    kbId: kb?.id,
+    kbName: kb?.name,
+    kbStatus: kb?.status,
+    parsingStage: stage,
+    result
+  });
+  
+  return result;
+});
 const shouldShowDetails = computed(() => {
   const stage = parsingState.value.stage;
   return stage === 'idle' || stage === 'complete' || stage === 'error' || stage === 'cancelled';
@@ -433,6 +465,26 @@ const handleCancelParsing = async () => {
 onUnmounted(() => {
   console.log(`[RightPanel] Component unmounted, currentDisplayedKbId: ${currentDisplayedKbId.value}`);
 
+});
+watch(() => store.selectedKnowledgeBase?.parsingState, (newParsingState, oldParsingState) => {
+  console.log(`[RightPanel] 解析状态变化:`, {
+    kbId: store.selectedKnowledgeBase?.id,
+    kbName: store.selectedKnowledgeBase?.name,
+    oldState: oldParsingState,
+    newState: newParsingState,
+    kbStatus: store.selectedKnowledgeBase?.status
+  });
+}, { deep: true });
+
+// 添加知识库状态变化的专门调试
+watch(() => store.selectedKnowledgeBase?.status, (newStatus, oldStatus) => {
+  console.log(`[RightPanel] 知识库状态变化:`, {
+    kbId: store.selectedKnowledgeBase?.id,
+    kbName: store.selectedKnowledgeBase?.name,
+    oldStatus,
+    newStatus,
+    parsingStage: store.selectedKnowledgeBase?.parsingState?.stage
+  });
 });
 
 

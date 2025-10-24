@@ -16,23 +16,22 @@ from openai import AsyncOpenAI, APIError, APIConnectionError, RateLimitError
 from sqlalchemy.orm import Session
 from qdrant_client import QdrantClient, models
 from llama_index.core import SimpleDirectoryReader
-# Import both splitters
-from llama_index.core.node_parser import SentenceSplitter, CodeSplitter
+
+from llama_index.core.node_parser import SentenceSplitter, CodeSplitter, MarkdownNodeParser
 
 from app.crud import crud_knowledgebase
-# (删除) 不再需要导入 KnowledgeBase 模型本身
-# from app.models.knowledgebase import KnowledgeBase
+
 from app.db.session import SessionLocal
 
 logger = logging.getLogger(__name__)
 
 # --- Configuration Constants ---
-CHUNK_SIZE = 512
-CHUNK_OVERLAP = 50
-CODE_CHUNK_LINES = 40
-CODE_CHUNK_OVERLAP = 15
-CODE_MAX_CHARS = 1500
-BATCH_SIZE = 10 # DashScope 向量 API 限制 input 数组大小 <= 25
+CHUNK_SIZE = 1024 # (见建议 3)
+CHUNK_OVERLAP = 100 # (见建议 3)
+CODE_CHUNK_LINES = 100        # (!!) 从 40 调大到 100 (或 80-150 之间尝试)
+CODE_CHUNK_OVERLAP = 20       # (!!) 对应调大
+CODE_MAX_CHARS = 4000         # (!!) 对应调大 (从 1500)
+BATCH_SIZE = 10# DashScope 向量 API 限制 input 数组大小 <= 25
 
 # --- Helper Function: Update Status ---
 def _update_parsing_status(db: Session, kb_id: int, stage: str, progress: Optional[int] = None, message: str = "") -> bool:
@@ -197,19 +196,24 @@ def run_ingestion_pipeline(
         if not _update_parsing_status(db, kb_id, "chunking", 30, f"Splitting {len(documents)} document(s)..."): return
         all_nodes = []
         logger.info(f"[KB {kb_id}] Starting dynamic splitting...")
+        markdown_splitter = MarkdownNodeParser()
         for doc_index, doc in enumerate(documents):
             file_path_meta = doc.metadata.get('file_path', '')
             _, file_ext = os.path.splitext(file_path_meta); file_ext = file_ext.lower()
             logger.debug(f"[KB {kb_id}] Processing doc {doc_index+1}/{len(documents)}: '{file_path_meta}' (ext: {file_ext})")
             splitter_to_use = None; language_for_code_splitter = None
             # --- Define language support here ---
-            if file_ext == '.py': language_for_code_splitter = "python"
+            if file_ext in ['.md', '.markdown', '.mdx']: splitter_to_use = markdown_splitter
+            elif file_ext == '.py': language_for_code_splitter = "python"
             elif file_ext in ['.js', '.jsx', '.ts', '.tsx']: language_for_code_splitter = "javascript"
             elif file_ext == '.go': language_for_code_splitter = "go"
             elif file_ext == '.java': language_for_code_splitter = "java"
             elif file_ext == '.rs': language_for_code_splitter = "rust"
             elif file_ext in ['.c', '.h']: language_for_code_splitter = "c"
             elif file_ext in ['.cpp', '.hpp', '.cxx', '.hxx']: language_for_code_splitter = "cpp"
+            else: # Explicit default for non-code/unknown
+                logger.debug(f"[KB {kb_id}] Using SentenceSplitter for {file_path_meta}")
+                splitter_to_use = SentenceSplitter( chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
             # --- Language support end ---
             if language_for_code_splitter:
                 logger.debug(f"[KB {kb_id}] Using CodeSplitter for {file_path_meta} (lang: {language_for_code_splitter})")
@@ -218,9 +222,7 @@ def run_ingestion_pipeline(
                 except Exception as cs_err:
                      logger.warning(f"[KB {kb_id}] Failed CodeSplitter init ({language_for_code_splitter}), fallback: {cs_err}")
                      splitter_to_use = SentenceSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP) # Fallback
-            else: # Explicit default for non-code/unknown
-                logger.debug(f"[KB {kb_id}] Using SentenceSplitter for {file_path_meta}")
-                splitter_to_use = SentenceSplitter( chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
+
             if splitter_to_use:
                  try:
                      doc_nodes = splitter_to_use.get_nodes_from_documents([doc])

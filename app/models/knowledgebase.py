@@ -39,3 +39,4 @@ class KnowledgeBase(Base):
     # 'remote_side=[id]' 告诉 SQLAlchemy parentId 引用的是本表的 id 列
     parent = relationship("KnowledgeBase", remote_side=[id], back_populates="children")
     children = relationship("KnowledgeBase", back_populates="parent")
+    kb_type = Column(String, nullable=False, default="primary")

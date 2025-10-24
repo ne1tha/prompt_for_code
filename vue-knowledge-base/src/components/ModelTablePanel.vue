@@ -42,19 +42,24 @@ const props = defineProps({
   isPickingForPrompt: {
     type: Boolean,
     default: false
+  },
+  isForRegeneratePanel: { 
+    type: Boolean,
+    default: false
   }
 });
 
-// 核心修改 3: 更新 tableData 的过滤逻辑
 const tableData = computed(() => {
   const list = store.filteredModelList;
+
+  // (!! 修正 !!)
+  // 如果是为 "再生成" 选择生成模型，或者为 "Prompt" 模式选择模型
   if (props.isPickingGenModel) {
-    // 假设 'Generative' 模型对应 model_type == 'generative' (全小写)
     return list.filter(model => model.model_type === 'generative');
   }
-  // 如果是为解析选择模型，则只显示 Embedding 类型
-  if (props.isPickingEmbeddingModel) {
-    // (修正) 使用 model_type 和 'embedding' (全小写)
+
+  // 如果是为解析选择模型
+  if (props.isPickingEmbeddingModel || props.isPickingForPrompt) {
     return list.filter(model => model.model_type === 'embedding');
   }
   return list;
@@ -69,19 +74,20 @@ watch(() => store.selectedModel, (newSelection) => {
 });
 
 const handleRowClick = (model) => {
-  // 当处于 picking 模式时，点击模型后，不应自动返回
-  // RightPanel 会监听 selectedModel 的变化
   store.setSelectedModel(model);
 
-  if (props.isPickingGenModel && model) {
-    emit('model-picked');
-  }
-  if (props.isPickingForPrompt && model) {
-    kbStore.setPromptSelectedModel(model); // 1. 在 Prompt Store 中设置模型
-    kbStore.setPromptModeTable('kb');      // 2. 自动切换回 KB 选择视图
-  }
-};
 
+  if (props.isForRegeneratePanel && model) {
+    emit('model-picked'); 
+  }
+  
+  // 3. (保持不变) 如果是为 Prompt 模式选择
+  if (props.isPickingForPrompt && model) {
+    kbStore.setPromptSelectedModel(model); 
+    kbStore.setPromptModeTable('hidden');     
+  }
+
+};
 const handleCreateModelClick = () => {
   emit('create-model');
 };

@@ -3,8 +3,16 @@ from sqlalchemy.orm import Session
 from qdrant_client import QdrantClient
 from typing import List
 import logging
-from app.schemas.knowledgebase import KnowledgeBase, KnowledgeBaseCreate, KnowledgeBaseUpdate, StartParsingRequest
-from app.services import kb_service, model_service
+from app.schemas.knowledgebase import ( # (!! 修改这个 import !!)
+    KnowledgeBase, KnowledgeBaseCreate, KnowledgeBaseUpdate, 
+    StartParsingRequest, GenerateSummaryRequest, 
+    GenerateGraphRequest  # <-- (1) 添加 GenerateGraphRequest
+)
+from app.services import ( # (!! 修改这个 import !!)
+    kb_service, generation_service, 
+    kg_service  # <-- (2) 添加 kg_service
+)
+from app.crud import crud_model, crud_knowledgebase
 from app.api.endpoints.health import get_db # 重用 get_db
 from app.core.lifespan import get_qdrant_client # 重用 get_qdrant_client
 from app.db.session import SessionLocal # 导入 SessionLocal 用于后台任务
@@ -22,44 +30,45 @@ def get_db_for_bg_task():
 def convert_sqlalchemy_to_pydantic(db_obj) -> KnowledgeBaseSchema:
     """
     Manually converts SQLAlchemy object to Pydantic Schema.
-    Ensures keyword arguments match Pydantic field names (snake_case).
+    (已更新) 确保 'kb_type' 字段被正确传递。
     """
     print("----- DEBUG: Inside convert_sqlalchemy_to_pydantic -----")
     if not db_obj:
-        print("Received None db_obj, returning None.")
-        print("-------------------------------------------------------")
         return None
         
     print(f"Received db_obj type: {type(db_obj)}")
     
-    # 直接读取属性 (我们知道它们存在)
+    # 直接读取属性
     _id = db_obj.id
     _name = db_obj.name
     _description = db_obj.description
     _parentId = db_obj.parentId
     _status = db_obj.status
     _parsing_state = db_obj.parsing_state
-    _source_file_path = db_obj.source_file_path # 直接访问
+    _source_file_path = db_obj.source_file_path
     
-    print(f"Read id: {_id}")
-    print(f"Read name: {_name}")
-    print(f"Read description: {_description}")
-    print(f"Read parentId: {_parentId}")
-    print(f"Read status: {_status}")
-    print(f"Read parsing_state: {_parsing_state}")
-    print(f"Read source_file_path: {_source_file_path}") # <-- 再次确认这里的值
+    # 从数据库对象中读取新的 'kb_type' 字段
+    _kb_type = db_obj.kb_type 
+    print(f"Read kb_type: {_kb_type}") # (调试)
+    # --- (修改结束) ---
 
     print("Attempting to create Pydantic object...")
     try:
-        # 确保关键字参数与 Pydantic Schema 字段名 (snake_case) 完全匹配
+        # 确保关键字参数与 Pydantic Schema 字段名 (snake_case 或 schema 中定义的) 完全匹配
         pydantic_instance = KnowledgeBaseSchema(
             id=_id,
             name=_name,
             description=_description,
             parentId=_parentId, # Pydantic Schema 定义的是 parentId
+            
+
+            # 将 _kb_type 传递给 Pydantic Schema 的 kb_type 字段
+            kb_type=_kb_type, 
+
+            
             status=_status,
             parsing_state=_parsing_state,
-            source_file_path=_source_file_path # 传递读取到的值
+            source_file_path=_source_file_path
         )
         print("Pydantic object created successfully.")
         print("-------------------------------------------------------")
@@ -67,9 +76,10 @@ def convert_sqlalchemy_to_pydantic(db_obj) -> KnowledgeBaseSchema:
         
     except Exception as e:
         print(f"Error creating Pydantic object: {e}")
-        # 打印一下传递给构造函数的值，看看是否有问题
+        # 打印一下传递给构造函数的值
         print("Values passed to constructor:")
-        print(f"  id={_id}, name={_name}, description={_description}, parentId={_parentId}")
+        # --- (!! 更新调试信息 !!) ---
+        print(f"  id={_id}, name={_name}, description={_description}, parentId={_parentId}, kb_type={_kb_type}")
         print(f"  status={_status}, parsing_state={_parsing_state}, source_file_path={_source_file_path}")
         print("-------------------------------------------------------")
         return None # 创建失败返回 None
@@ -259,3 +269,120 @@ def cancel_parsing(
     if db_kb is None:
         raise HTTPException(status_code=404, detail="KnowledgeBase not found")
     return db_kb
+
+
+@router.post(
+    "/{id}/generate-summary",
+    response_model=KnowledgeBaseSchema,
+    summary="[KB Store] (RAG-B) 生成 L2a 摘要子知识库"
+)
+async def generate_l2a_summary( 
+    id: int, 
+    request: GenerateSummaryRequest,
+    # background_tasks: BackgroundTasks, # <-- (!! 移除 !!) 不再需要后台任务
+    db: Session = Depends(get_db),
+    # qdrant: QdrantClient = Depends(get_qdrant_client) # <-- (!! 移除 !!) 不再需要 Qdrant 客户端
+):
+    """
+    (RAG 循环 B) (已修复为混合架构)
+    (!! 修改 !!) 现在只生成 L2a 条目和文件，不自动开始解析。
+    """
+    logger.info(f"[KB {id}] 收到生成 L2a 摘要的请求...")
+
+    try:
+        # --- 1. 获取父知识库和生成模型 (保持不变) ---
+        parent_kb = crud_knowledgebase.get_kb(db, id)
+        # ... (检查 parent_kb)
+        generation_model = crud_model.get_model(db, request.generation_model_id)
+        # ... (检查 generation_model)
+
+        # --- 2. 调用 Generation Service (异步, 保持不变) ---
+        logger.info(f"[KB {id}] 正在调用 generation_service 管道...")
+        new_sub_kb = await generation_service.generate_summary_pipeline(
+            db=db,
+            parent_kb=parent_kb,
+            generation_model=generation_model
+        )
+        logger.info(f"[KB {id}] Generation service 完成。新的 L2a KB ID: {new_sub_kb.id}")
+
+        # --- 3. (!! 移除 !!) 不再自动调用 Ingestion Service ---
+        # logger.info(f"[KB {new_sub_kb.id}] 正在为新的 L2a 摘要触发摄取...")
+        # processing_kb = kb_service.start_kb_parsing(
+        #     db=db,
+        #     qdrant=qdrant,
+        #     kb_id=new_sub_kb.id,
+        #     embedding_model_id=request.embedding_model_id,
+        #     background_tasks=background_tasks # <-- 移除
+        # ) 
+
+        # --- 4. 返回响应 (!! 修改 !!) ---
+        # 直接转换并返回新创建的 new_sub_kb (它将是 'new' 状态)
+        pydantic_kb = convert_sqlalchemy_to_pydantic(new_sub_kb) # 使用 new_sub_kb
+        if not pydantic_kb:
+             raise HTTPException(status_code=500, detail="Failed to process new knowledge base data after summary generation.")
+
+        logger.info(f"[KB {new_sub_kb.id}] L2a 摘要已创建 (状态: {new_sub_kb.status})，等待手动解析。")
+        return pydantic_kb
+
+    except FileNotFoundError as e:
+        logger.error(f"Generate summary failed for KB {id}: {e}", exc_info=True)
+        raise HTTPException(status_code=404, detail=str(e))
+    except (ValueError, RuntimeError) as e:
+        logger.error(f"Generate summary failed for KB {id}: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Generate summary failed for KB {id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
+    
+@router.post(
+    "/{id}/generate-graph",
+    response_model=KnowledgeBaseSchema,
+    summary="[KB Store] (RAG-B) 生成 L2b 知识图谱子知识库"
+)
+async def generate_l2b_graph( # (1) <-- 关键修复：改回 async def
+    id: int,
+    request: GenerateGraphRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    (RAG 循环 B - L2b) (已修复为混合架构)
+    """
+    logger.info(f"[KB {id}] 收到生成 L2b 知识图谱的请求...")
+
+    try:
+        # --- 1. 获取父知识库和生成模型 (同步) ---
+        parent_kb = crud_knowledgebase.get_kb(db, id)
+        if not parent_kb:
+            raise HTTPException(status_code=404, detail="Parent KnowledgeBase not found")
+        
+        generation_model = crud_model.get_model(db, request.generation_model_id)
+        if not generation_model:
+            raise HTTPException(status_code=404, detail="Generation model not found")
+
+        # --- 2. 调用 KG Service (异步) ---
+        logger.info(f"[KB {id}] 正在调用 kg_service 管道...")
+        # (2) <-- 关键修复：添加 await
+        new_sub_kb = await kg_service.generate_graph_pipeline(
+            db=db,
+            parent_kb=parent_kb,
+            generation_model=generation_model
+        )
+        logger.info(f"[KB {id}] KG service 完成。新的 L2b KB ID: {new_sub_kb.id}")
+
+        # --- 4. 返回响应 (同步) ---
+        pydantic_kb = convert_sqlalchemy_to_pydantic(new_sub_kb)
+        if not pydantic_kb:
+             raise HTTPException(status_code=500, detail="Failed to process new knowledge base data after graph generation.")
+        
+        logger.info(f"[KB {new_sub_kb.id}] L2b 知识图谱已创建。")
+        return pydantic_kb
+
+    except FileNotFoundError as e:
+        logger.error(f"Generate graph failed for KB {id}: {e}", exc_info=True)
+        raise HTTPException(status_code=404, detail=str(e))
+    except (ValueError, RuntimeError) as e:
+        logger.error(f"Generate graph failed for KB {id}: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Generate graph failed for KB {id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {e}")

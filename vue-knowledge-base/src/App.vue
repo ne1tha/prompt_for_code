@@ -28,7 +28,8 @@
         'create-panel-is-open': isCreatePanelVisible || isCreateModelPanelVisible,
         'regenerate-panel-is-open': isRegeneratePanelVisible,
         'is-picking-mode': (isRegeneratePanelVisible && regeneratePanelMode !== 'config') || (isCreatePanelVisible && createPanelMode !== 'config'),
-        'is-parsing-picking-mode': isPickingForParsing
+        'is-parsing-picking-mode': isPickingForParsing,
+        'prompt-table-is-open': activeMenu === 'prompt' && (store.promptModeTable === 'kb' || store.promptModeTable === 'model')
       }">
 
         <div class="create-panel-wrapper">
@@ -60,8 +61,9 @@
           
           <div class="table-wrapper-model">
             <ModelTablePanel 
-              :is-picking-gen-model="regeneratePanelMode === 'model-picking'"
-              :is-picking-embedding-model="isPickingForParsing"
+              :is-picking-gen-model="isPickingForRegenGenModel"
+              :is-picking-embedding-model="isPickingForParsing || isPickingForRegenEmbedding"
+              :is-for-regenerate-panel="isPickingForRegenGenModel || isPickingForRegenEmbedding"
               :is-picking-for-prompt="activeMenu === 'prompt' && store.promptModeTable === 'model'"
               @create-model="handleCreateModel"
               @model-picked="handleRegeneratePanelModeChange('config')"
@@ -133,29 +135,6 @@ watch(() => store.selectedKnowledgeBase, (newKb) => {
   const currentSelectedKbId = newKb?.id ?? null;
   const oldKbId = previousSelectedKbId.value;
 
-  // // --- (!! 关键修复 !!) 恢复并改进重置逻辑 ---
-  // // 条件1: 之前有一个选中的 KB (oldKbId 不为 null)
-  // // 条件2: 当前选择的 KB ID 与之前的不同 (currentSelectedKbId !== oldKbId) - 这包括了关闭详情(newKb为null)的情况
-  // if (oldKbId !== null && currentSelectedKbId !== oldKbId) {
-  //   // 从 store 中查找上一个 KB 对象的状态
-  //   const oldKbFromStore = store.knowledgeBaseList.find(kb => kb.id === oldKbId);
-  //   const oldStage = oldKbFromStore?.parsingState?.stage;
-
-  //   // 条件3: 之前那个 KB 的状态 *确实* 是 'picking_model'
-  //   if (oldStage === 'picking_model') {
-  //     console.log(`App.vue Watcher: Resetting OLD KB (ID: ${oldKbId}) state from picking_model to idle because selection changed to ${currentSelectedKbId}.`);
-  //     // 发送 PUT 请求重置 *旧的* KB 的状态
-  //     // (修正) 发送 snake_case payload
-  //     store.updateKnowledgeBase(oldKbId, { parsing_state: { stage: 'idle', progress: 0, message: 'Reset due to selection change' } })
-  //       .catch(err => {
-  //         console.error("App.vue Watcher: Failed to reset old KB state:", err);
-  //       });
-  //   }
-  // }
-  // // --- 修复结束 ---
-
-  // // 更新 previousSelectedKbId 以供下次比较
-  // previousSelectedKbId.value = currentSelectedKbId;
 
 }, { deep: true }); // deep: true 仍然需要，以便能检测到 deselection (newKb变成null)
 
@@ -163,7 +142,13 @@ const isPickingForParsing = computed(() => {
   // 直接检查当前选中项的状态
   return store.selectedKnowledgeBase?.parsingState?.stage === 'picking_model';
 });
+const isPickingForRegenGenModel = computed(() => {
+  return isRegeneratePanelVisible.value && regeneratePanelMode.value === 'model-picking';
+});
 
+const isPickingForRegenEmbedding = computed(() => {
+  return isRegeneratePanelVisible.value && regeneratePanelMode.value === 'embedding-model-picking';
+});
 
 const handleCreatePanelModeChange = (mode) => {
     createPanelMode.value = mode;
@@ -193,7 +178,14 @@ const isDetailPanelOpen = computed(() => {
     console.log(`[App COMPUTED isDetailPanelOpen] BLOCKED: RegeneratePanel is visible.`);
     return false; 
   }
-  
+  if(isPickingForParsing.value) {
+    console.log(`[App COMPUTED isDetailPanelOpen] BLOCKED: Picking for Parsing.`);
+    return false; 
+  }
+  if (activeMenu.value === 'prompt') {
+    console.log(`[App COMPUTED isDetailPanelOpen] BLOCKED: Active menu is prompt.`);
+    return false;
+  }
   const result = kbSelected || modelSelected;
   console.log(`[App COMPUTED isDetailPanelOpen] Result: ${result} (kb: ${kbSelected}, model: ${modelSelected})`);
   return result;
@@ -201,10 +193,23 @@ const isDetailPanelOpen = computed(() => {
 
 
 const isModelTableVisible = computed(() => {
+    // (!! 新增调试 !!)
+    console.log(`[App COMPUTED isModelTableVisible] Checking:
+      - activeMenu.value: ${activeMenu.value}
+      - promptModeTable: ${store.promptModeTable}
+      - isPickingForRegenGenModel: ${isPickingForRegenGenModel.value}
+      - isPickingForRegenEmbedding: ${isPickingForRegenEmbedding.value} 
+      - isPickingForParsing: ${isPickingForParsing.value}`);
+
     if (activeMenu.value === 'model') return true;
     if (activeMenu.value === 'prompt' && store.promptModeTable === 'model') return true;
-    if (isRegeneratePanelVisible.value && regeneratePanelMode.value === 'model-picking') return true;
-    if (isPickingForParsing.value) return true; // 当处于选择 embedding 模型状态时
+    if (isPickingForRegenGenModel.value) return true; // “再生成”选择“生成”模型
+
+    // (!! 关键修复 !!) 添加下面这一行
+    if (isPickingForRegenEmbedding.value) return true; // “再生成”选择“嵌入”模型
+
+    if (isPickingForParsing.value) return true; // “详情页”选择“嵌入”模型
+
     return false;
 });
 
@@ -226,7 +231,7 @@ const handleMenuSelect = (index) => {
   regeneratePanelMode.value = 'config';
   createPanelMode.value = 'config';
   if (index === 'prompt') {
-    store.setPromptModeTable('kb');
+    store.setPromptModeTable('hidden');
     store.setPromptSelectedModel(null);
     store.setPromptSelection([]); // 清空多选
   }
@@ -272,6 +277,32 @@ const handleKbPicked = () => {
 
 // 这个 handleParse 似乎没用到，可以考虑删除
 const handleParse = () => { console.log('Parse KB triggered from App.vue'); };
+
+watch(() => store.knowledgeBaseList, (newList) => {
+  console.log(`[App] 知识库列表更新:`, newList.map(kb => ({
+    id: kb.id,
+    name: kb.name,
+    type: kb.kbType,
+    status: kb.status,
+    parentId: kb.parentId,
+    parsingStage: kb.parsingState?.stage
+  })));
+}, { deep: true });
+
+// 添加选中的知识库变化调试
+watch(() => store.selectedKnowledgeBase, (newKb, oldKb) => {
+  console.log(`[App] 选中的知识库变化:`, {
+    oldKb: oldKb ? { id: oldKb.id, name: oldKb.name } : null,
+    newKb: newKb ? { 
+      id: newKb.id, 
+      name: newKb.name,
+      type: newKb.kbType,
+      status: newKb.status,
+      parsingStage: newKb.parsingState?.stage
+    } : null
+  });
+}, { deep: true });
+
 </script>
 <style>
 /* --- 全局与基础样式 --- */
@@ -382,23 +413,33 @@ body,
   }
 }
 
-/* 状态2: Prompt 模式 (组合面板/主面板) */
 .is-prompt-mode {
+  /* (!! 修正 !!) 默认状态：PromptEditor 占 100% */
   & .composition-panel-wrapper {
-    flex-basis: calc(70% - 10px);
+    flex-basis: 100%;
     opacity: 1;
   }
   & .main-panel-wrapper {
-    flex-basis: calc(30% - 10px);
-
-    
+    flex-basis: 0;
+    opacity: 0; /* 确保它默认不占空间 */
   }
-  & > *:not(.composition-panel-wrapper):not(.main-panel-wrapper) {
+  
+  /* (!! 移除 !!) 下面这个规则不再需要，因为它与默认状态冲突 */
+  /* & > *:not(.composition-panel-wrapper):not(.main-panel-wrapper) {
     flex-basis: 0;
     opacity: 0;
+  } */
+}
+/* (!! 新增 !!) Prompt 模式下，当表格需要打开时的 70/30 布局 */
+.is-prompt-mode.prompt-table-is-open {
+  & .composition-panel-wrapper {
+    flex-basis: calc(60% - 10px);
+  }
+  & .main-panel-wrapper {
+    flex-basis: calc(40% - 10px);
+    opacity: 1; /* 确保 main-panel 可见 */
   }
 }
-
 /* 状态3: 创建面板打开 (创建面板/主面板) */
 .create-panel-is-open {
   & .create-panel-wrapper {
