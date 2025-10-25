@@ -7,6 +7,8 @@ __pycache__/
 .Python
 pip-log.txt
 
+uploads/
+
 vue-knowledge-base/node_modules/
 vue-knowledge-base/npm-debug.log*
 vue-knowledge-base/yarn-debug.log*
