@@ -29,7 +29,7 @@
             label="模型维度 (Dimensions)" 
             required
           >
-            <el-input-number v-model="form.dimensions" :min="1" placeholder="例如: 384, 768, 1536" style="width: 100%;" />
+            <el-input-number v-model="form.dimensions" :min="0" placeholder="0表示不设置维度，使用对应平台默认维度，请确认是否支持。" style="width: 100%;" />
           </el-form-item>
           
           <el-form-item label="API 密钥 (API Key)">
@@ -111,10 +111,10 @@ const handleSubmit = async () => {
   }
   
   // (关键修复) 维度校验
-  if (form.value.model_type === 'embedding' && (!form.value.dimensions || form.value.dimensions <= 0)) {
+  if (form.value.model_type === 'embedding' && (!form.value.dimensions && form.value.dimensions < 0)) {
      ElNotification({
       title: '错误',
-      message: 'Embedding 模型必须指定大于 0 的维度 (Dimensions)。',
+      message: 'Embedding 模型必须指定大于等于 0 的维度。',
       type: 'error',
     });
     return;

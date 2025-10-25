@@ -22,7 +22,7 @@
             label="模型维度 (Dimensions)" 
             required
           >
-            <el-input-number v-model="editableModel.dimensions" :min="1" placeholder="例如: 384, 768" style="width: 100%;" />
+            <el-input-number v-model="editableModel.dimensions" :min="0" placeholder="例如: 384, 768" style="width: 100%;" />
         </el-form-item>
         
         <el-form-item label="API Key">
@@ -59,7 +59,7 @@ watch(() => store.selectedModel, (newModel) => {
       model_type: newModel.model_type,
       api_key: newModel.api_key,
       endpoint_url: newModel.endpoint_url,
-      dimensions: newModel.dimensions
+      dimensions: newModel.dimensions === null ? 0 : newModel.dimensions
     }; 
   } else { 
     editableModel.value = null; 
@@ -70,18 +70,23 @@ const handleClose = () => { store.setSelectedModel(null); };
 
 const handleSave = async () => { 
   try {
-    // (修正) 维度校验
-    if (editableModel.value.model_type === 'embedding' && (!editableModel.value.dimensions || editableModel.value.dimensions <= 0)) {
+    // (修复 3) 校验逻辑改为: 必须是数字且不能小于0
+    if (editableModel.value.model_type === 'embedding' && (editableModel.value.dimensions === null || editableModel.value.dimensions < 0)) {
        ElNotification({
         title: '错误',
-        message: 'Embedding 模型必须指定大于 0 的维度 (Dimensions)。',
+        message: 'Embedding 模型必须指定大于等于 0 的维度。',
         type: 'error',
       });
       return;
     }
     
-    // editableModel.value 现在包含正确的 snake_case 字段
-    await store.updateModel(editableModel.value);
+    // (修复 4) 如果 UI 上是 0, 发送给后端 null
+    const payload = { ...editableModel.value };
+    if (payload.model_type === 'embedding' && payload.dimensions === 0) {
+      payload.dimensions = null;
+    }
+
+    await store.updateModel(payload); // 发送 payload
     ElNotification({ title: '成功', message: '模型信息已保存。', type: 'success' });
   } catch (err) {
     ElNotification({ title: '保存失败', message: err.message || '未知错误', type: 'error' });

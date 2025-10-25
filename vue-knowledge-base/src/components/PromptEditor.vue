@@ -276,6 +276,7 @@ watch(mainContent, (newValue) => {
   if (newValue && generatedContent.value && !isGenerating.value) {
     generatedContent.value = "";
     retrievedContexts.value = [];
+    expandedContexts.value = {};
   }
 });
 

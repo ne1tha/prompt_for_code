@@ -248,7 +248,7 @@ const handleSubmit = async () => {
       await kbStore.updateKnowledgeBase(newL2aKb.id, { name: form.value.newName.trim() });
     }
     
-    ElNotification({ title: '成功', message: '摘要子知识库生成任务已开始！', type: 'success' });
+    ElNotification({ title: '成功', message: '摘要子知识库生成任务已完成！', type: 'success' });
     handleClose(); // (Req 5) 关闭面板，App.vue 会自动显示 RightPanel
     
   } catch (err) {

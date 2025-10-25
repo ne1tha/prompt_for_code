@@ -15,7 +15,7 @@
       <div class="avatar-footer">
         <el-avatar>{{ currentUser.fullName[0] }}</el-avatar>
         <div class="user-info">
-          <span>{{ currentUser.fullName }}</span><small>{{ currentUser.email }}</small>
+          <span>{{ currentUser.fullName }}</span><small>{{ currentUser.words }}</small>
         </div>
       </div>
     </el-aside>
@@ -111,7 +111,7 @@ const isCreatePanelVisible = ref(false);
 const isRegeneratePanelVisible = ref(false);
 const isCreateModelPanelVisible = ref(false);
 const regeneratePanelMode = ref('config');
-const currentUser = { fullName: 'Current User', email: 'user@example.com' };
+const currentUser = { fullName: '测试版本', words: '随时欢迎pr' };
 const createPanelMode = ref('config');
 
 onMounted(() => {
@@ -176,10 +176,6 @@ const isDetailPanelOpen = computed(() => {
   
   if (isRegeneratePanelVisible.value) {
     console.log(`[App COMPUTED isDetailPanelOpen] BLOCKED: RegeneratePanel is visible.`);
-    return false; 
-  }
-  if(isPickingForParsing.value) {
-    console.log(`[App COMPUTED isDetailPanelOpen] BLOCKED: Picking for Parsing.`);
     return false; 
   }
   if (activeMenu.value === 'prompt') {

@@ -173,7 +173,8 @@ const handleSubmit = async () => {
     });
 
     // --- 第 2 步: 上传文件 ---
-    const fileToUpload = form.value.files[0].raw;
+    const fileObject = form.value.files[0];
+    const fileToUpload = fileObject.raw ? fileObject.raw : fileObject;
     if (!createdKB || !createdKB.id || !fileToUpload) {
       throw new Error("知识库条目创建失败或文件丢失。");
     }
