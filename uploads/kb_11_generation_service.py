@@ -10,6 +10,10 @@ from datetime import datetime, timezone
 from typing import Dict, Any
 import os
 
+# (1) --- LlamaIndex/RAG (已移除) ---
+# (移除了 chromadb, llama_index.* 的所有导入)
+
+# (2) --- 新增 RAG 服务导入 ---
 from qdrant_client import QdrantClient
 from app.services.rag_service import retrieve_contexts_only
 from app.schemas.rag import RagRetrieveRequest
@@ -27,7 +31,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # (保持不变)
-FILE_SIZE_THRESHOLD_BYTES = 10 * 1024 
+FILE_SIZE_THRESHOLD_BYTES = 300 * 1024 
 
 
 async def _perform_rag_retrieval(
@@ -36,7 +40,9 @@ async def _perform_rag_retrieval(
     parent_kb: models_kb
 ) -> str:
     """
+    (!! 已重构 !!)
     使用 app.services.rag_service 执行 RAG 检索以获取相关代码块。
+    不再使用 LlamaIndex/ChromaDB。
     """
     logger.info(f"[KB {parent_kb.id}] 文件过大，启动 RAG 检索 (使用 rag_service)...")
 
@@ -144,18 +150,9 @@ async def generate_summary_pipeline(
     
     try:
         file_size = os.path.getsize(source_file_path_str)
-        file_suffix = source_file_path.suffix.lower()
         logger.info(f"源文件大小: {file_size} 字节. (阈值: {FILE_SIZE_THRESHOLD_BYTES} 字节)")
-        if file_suffix in ['.zip', '.rar']:
-            # 策略 2 (RAG): 如果是压缩包，必须使用 RAG
-            logger.info("源是压缩包。强制启动 RAG 检索 (调用 _perform_rag_retrieval)...")
-            code_content = await _perform_rag_retrieval(
-                db=db,
-                qdrant=qdrant,
-                parent_kb=parent_kb
-            )
-            context_source = "RAG 检索到的相关代码块"
-        elif file_size < FILE_SIZE_THRESHOLD_BYTES:
+        
+        if file_size < FILE_SIZE_THRESHOLD_BYTES:
             # (策略 1: 文件较小，读取全部内容)
             logger.info("文件小于阈值，正在读取完整文件内容...")
             async with aiofiles.open(source_file_path, mode='r', encoding='utf-8') as f:
@@ -172,10 +169,7 @@ async def generate_summary_pipeline(
                 #  因为 rag_service 会自己处理)
             )
             context_source = "RAG 检索到的相关代码块"
-    except UnicodeDecodeError as e:
-        # (新增) 增加一个专门的捕获，以防万一
-        logger.error(f"文件 {source_file_path.name} 不是有效的 UTF-8 编码: {e}", exc_info=True)
-        raise RuntimeError(f"File {source_file_path.name} is not valid UTF-8 text.")
+            
     except Exception as e:
         logger.error(f"获取上下文内容失败 (KB ID: {parent_kb.id}): {e}", exc_info=True)
         raise RuntimeError(f"Failed to get context for summary: {e}")

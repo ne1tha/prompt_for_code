@@ -281,7 +281,7 @@ async def generate_l2a_summary(
     request: GenerateSummaryRequest,
     # background_tasks: BackgroundTasks, # <-- (!! 移除 !!) 不再需要后台任务
     db: Session = Depends(get_db),
-    # qdrant: QdrantClient = Depends(get_qdrant_client) # <-- (!! 移除 !!) 不再需要 Qdrant 客户端
+    qdrant: QdrantClient = Depends(get_qdrant_client)
 ):
     """
     (RAG 循环 B) (已修复为混合架构)
@@ -300,6 +300,7 @@ async def generate_l2a_summary(
         logger.info(f"[KB {id}] 正在调用 generation_service 管道...")
         new_sub_kb = await generation_service.generate_summary_pipeline(
             db=db,
+            qdrant=qdrant,
             parent_kb=parent_kb,
             generation_model=generation_model
         )

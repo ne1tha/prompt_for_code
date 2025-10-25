@@ -148,7 +148,6 @@ def save_kb_file(db: Session, kb_id: int, file: UploadFile) -> Optional[Knowledg
     return refetched_db_kb
 
 
-
 def start_kb_parsing(
     db: Session,
     qdrant: QdrantClient,
@@ -157,16 +156,16 @@ def start_kb_parsing(
     background_tasks: BackgroundTasks
 ) -> Optional[KnowledgeBase]:
     """
-    (startParsing) Validates, prepares Qdrant collection, updates status,
+    (startParsing) Validates, prepares Qdrant collection (if possible),
     and triggers the background knowledge ingestion pipeline.
     """
-    # 1. Get KnowledgeBase object
+    # 1. Get KnowledgeBase object (保持不变)
     db_kb = crud_knowledgebase.get_kb(db, kb_id)
     if not db_kb:
         logger.error(f"[KB {kb_id}] KnowledgeBase not found for starting parsing.")
         return None
 
-    # 2. Validate file path
+    # 2. Validate file path (保持不变)
     if not db_kb.source_file_path:
         raise ValueError("No source file uploaded for this KnowledgeBase. Please upload a file first.")
     file_path_obj = Path(db_kb.source_file_path)
@@ -174,96 +173,119 @@ def start_kb_parsing(
         logger.error(f"[KB {kb_id}] Source file not found on server: {db_kb.source_file_path}")
         raise ValueError(f"File not found on server: {db_kb.source_file_path}")
 
-    # 3. Get and validate embedding model info
+    # 3. Get and validate embedding model info (!! 已修改 !!)
     db_model = crud_model.get_model(db, embedding_model_id)
     if not db_model:
         raise ValueError("Embedding model not found")
     if db_model.model_type != 'embedding':
         raise ValueError(f"Model '{db_model.name}' is not an 'embedding' model.")
+    
+    # (!! 关键修复 1: 放宽维度验证 !!)
     required_dimension = db_model.dimensions
-    if not required_dimension or required_dimension <= 0:
-        raise ValueError(f"Model '{db_model.name}' dimensions are not set or invalid ({required_dimension}).")
+    
+    # 仅当维度被设置（非 null）但无效（<=0）时才报错
+    if required_dimension and required_dimension <= 0:
+        raise ValueError(f"Model '{db_model.name}' dimensions is set to an invalid value ({required_dimension}). Must be positive or null/0.")
+    
+    # 如果维度为 None 或 0 (例如 Ollama)，我们接受它，并记录警告
+    if not required_dimension:
+        logger.warning(f"[KB {kb_id}] Model '{db_model.name}' has no dimension set (value: {required_dimension}).")
+        logger.warning(f"[KB {kb_id}] Assuming ingestion pipeline will handle dynamic dimension discovery and Qdrant creation.")
+        required_dimension = None # 确保它是 None 而不是 0
+
     if not db_model.endpoint_url:
         raise ValueError(f"Model '{db_model.name}' is missing the 'endpoint_url'.")
     if not db_model.name:
         raise ValueError(f"Model '{db_model.name}' is missing the 'name' identifier.")
 
-    # 4. Prepare Qdrant collection (Corrected Logic)
+    # 4. (!! 关键修复 2: 使 Qdrant 准备工作变为可选 !!)
     collection_name = f"kb_{db_kb.id}"
-    try:
-        # 4a. Try to get existing collection info
-        logger.debug(f"[KB {kb_id}] Checking Qdrant collection '{collection_name}'...")
-        coll_info = qdrant.get_collection(collection_name)
-        logger.debug(f"[KB {kb_id}] Collection '{collection_name}' found.")
-
-        # 4b. Check vector parameters and dimension using correct attribute path
-        current_vectors_params = coll_info.config.params.vectors # Correct path
-        current_dimension = None
-
-        if isinstance(current_vectors_params, models.VectorParams): # Default unnamed vector
-             current_dimension = current_vectors_params.size
-        elif isinstance(current_vectors_params, dict): # Named vectors
-             # Try getting default '' or the first one found
-             if '' in current_vectors_params:
-                 current_dimension = current_vectors_params[''].size
-             elif current_vectors_params:
-                 first_vector_name = next(iter(current_vectors_params))
-                 current_dimension = current_vectors_params[first_vector_name].size
-                 logger.warning(f"[KB {kb_id}] Found named vectors, using size from '{first_vector_name}'.")
-
-        # 4c. Compare dimensions and recreate if necessary
-        if current_dimension is None:
-             logger.warning(f"[KB {kb_id}] Could not determine vector dimension for existing collection '{collection_name}'. Recreating...")
-             qdrant.recreate_collection(
-                 collection_name=collection_name,
-                 vectors_config=VectorParams(size=required_dimension, distance=Distance.COSINE)
-             )
-        elif current_dimension != required_dimension:
-            logger.warning(f"[KB {kb_id}] Qdrant '{collection_name}' dim mismatch ({current_dimension} vs {required_dimension}). Recreating...")
-            qdrant.recreate_collection(
-                collection_name=collection_name,
-                vectors_config=VectorParams(size=required_dimension, distance=Distance.COSINE)
-            )
-        else:
-             logger.info(f"[KB {kb_id}] Qdrant collection '{collection_name}' exists with correct dimension ({current_dimension}).")
-
-    except Exception as get_coll_err:
-        # 4d. Handle errors during get_collection (assume collection needs creation)
-        # More specific error checking (e.g., for 404) could be added here if needed
-        logger.info(f"[KB {kb_id}] Qdrant collection '{collection_name}' not found or error checking ({type(get_coll_err).__name__}). Attempting creation with dim {required_dimension}...")
+    
+    # (!! 仅当维度已知时才配置 Qdrant !!)
+    if required_dimension:
+        logger.info(f"[KB {kb_id}] Pre-configuring Qdrant collection '{collection_name}' with known dimension: {required_dimension}")
         try:
-            qdrant.create_collection(
-                collection_name=collection_name,
-                vectors_config=VectorParams(size=required_dimension, distance=Distance.COSINE)
-            )
-            logger.info(f"[KB {kb_id}] Qdrant collection '{collection_name}' created successfully.")
-        except Exception as create_err:
-            # Handle creation failure (e.g., the 409 conflict if get_collection failed for other reasons)
-            logger.error(f"[KB {kb_id}] Failed to create Qdrant collection '{collection_name}' after check failed: {create_err}", exc_info=True)
-            db_kb.status = "error"
-            db_kb.parsing_state = {"stage": "error", "message": f"Qdrant Check/Create Error: {create_err}"} # Report create error
-            # db_kb.updated_at = datetime.now(timezone.utc)
-            try: db.commit()
-            except Exception as commit_err: logger.error(f"Commit error status failed: {commit_err}"); db.rollback()
-            return db_kb # Return object with error status
+            # 4a. 尝试获取现有集合信息
+            logger.debug(f"[KB {kb_id}] Checking Qdrant collection '{collection_name}'...")
+            coll_info = qdrant.get_collection(collection_name)
+            logger.debug(f"[KB {kb_id}] Collection '{collection_name}' found.")
 
-    # --- Qdrant collection should now be ready ---
+            # 4b. 检查向量参数和维度 (保持不变)
+            current_vectors_params = coll_info.config.params.vectors
+            current_dimension = None
+            if isinstance(current_vectors_params, models.VectorParams):
+                 current_dimension = current_vectors_params.size
+            elif isinstance(current_vectors_params, dict):
+                 if '' in current_vectors_params:
+                     current_dimension = current_vectors_params[''].size
+                 elif current_vectors_params:
+                     first_vector_name = next(iter(current_vectors_params))
+                     current_dimension = current_vectors_params[first_vector_name].size
+                     logger.warning(f"[KB {kb_id}] Found named vectors, using size from '{first_vector_name}'.")
 
-    # 5. Update database status to 'processing'
+            # 4c. 比较维度 (保持不变)
+            if current_dimension is None:
+                 logger.warning(f"[KB {kb_id}] Could not determine vector dimension for existing collection. Recreating...")
+                 qdrant.recreate_collection(
+                     collection_name=collection_name,
+                     vectors_config=VectorParams(size=required_dimension, distance=Distance.COSINE)
+                 )
+            elif current_dimension != required_dimension:
+                logger.warning(f"[KB {kb_id}] Qdrant '{collection_name}' dim mismatch ({current_dimension} vs {required_dimension}). Recreating...")
+                qdrant.recreate_collection(
+                    collection_name=collection_name,
+                    vectors_config=VectorParams(size=required_dimension, distance=Distance.COSINE)
+                )
+            else:
+                 logger.info(f"[KB {kb_id}] Qdrant collection '{collection_name}' exists with correct dimension ({current_dimension}).")
+
+        except Exception as get_coll_err:
+            # 4d. 创建集合 (保持不变)
+            logger.info(f"[KB {kb_id}] Qdrant collection '{collection_name}' not found or error checking. Attempting creation with dim {required_dimension}...")
+            try:
+                qdrant.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=VectorParams(size=required_dimension, distance=Distance.COSINE)
+                )
+                logger.info(f"[KB {kb_id}] Qdrant collection '{collection_name}' created successfully.")
+            except Exception as create_err:
+                logger.error(f"[KB {kb_id}] Failed to create Qdrant collection '{collection_name}': {create_err}", exc_info=True)
+                db_kb.status = "error"
+                db_kb.parsing_state = {"stage": "error", "message": f"Qdrant Check/Create Error: {create_err}"}
+                try: db.commit()
+                except Exception as commit_err: logger.error(f"Commit error status failed: {commit_err}"); db.rollback()
+                return db_kb
+    
+    else:
+        # (!! 如果维度为 None (例如 Ollama))
+        logger.warning(f"[KB {kb_id}] Skipping Qdrant setup: 'dimensions' is None.")
+        logger.warning(f"[KB {kb_id}] The ingestion pipeline MUST now handle collection creation.")
+        
+        # (推荐) 作为安全措施，删除任何可能存在的旧集合，
+        # 因为它可能具有来自先前模型的错误维度。
+        try:
+            if qdrant.collection_exists(collection_name):
+                logger.warning(f"[KB {kb_id}] Deleting existing collection '{collection_name}' to allow pipeline to recreate it with dynamic dimensions.")
+                qdrant.delete_collection(collection_name)
+        except Exception as e:
+            logger.error(f"[KB {kb_id}] Failed to delete existing collection '{collection_name}' during pre-flight: {e}", exc_info=True)
+            # 即使删除失败也继续，pipeline 也许能处理
+            
+    # --- Qdrant 准备工作结束 ---
+
+    # 5. 更新数据库状态为 'processing' (保持不变)
     db_kb.status = "processing"
     db_kb.parsing_state = {"stage": "pending", "progress": 0, "message": "Queued for processing..."}
-    db_kb.embedding_model_id = db_model.id # Record which model is used
-    # db_kb.updated_at = datetime.now(timezone.utc)
+    db_kb.embedding_model_id = db_model.id 
     try:
         db.commit()
-        db.refresh(db_kb) # Refresh to get potentially updated state from DB triggers/defaults (usually safe here)
+        db.refresh(db_kb) 
     except Exception as commit_err:
         logger.error(f"[KB {kb_id}] Failed commit 'processing' status: {commit_err}", exc_info=True)
         db.rollback()
-        # Raise exception to signal API failure (500)
         raise HTTPException(status_code=500, detail=f"Database error setting status for KB {kb_id}")
 
-    # 6. Add the actual ingestion task to background tasks
+    # 6. 添加后台任务 (保持不变)
     try:
         background_tasks.add_task(
             run_ingestion_pipeline,
@@ -272,29 +294,25 @@ def start_kb_parsing(
                 "name": db_model.name,
                 "endpoint_url": db_model.endpoint_url,
                 "api_key": db_model.api_key,
-                "dimensions": db_model.dimensions # Pass dimensions to pipeline
+                "dimensions": db_model.dimensions # (保持不变, 传递 None 过去)
             },
-            file_path_str=db_kb.source_file_path, # Pass file path as string
+            file_path_str=db_kb.source_file_path,
             qdrant_host=settings.QDRANT_HOST,
             qdrant_port=settings.QDRANT_PORT
         )
         logger.info(f"[KB {kb_id}] Background task 'run_ingestion_pipeline' added.")
     except Exception as task_err:
-        # Handle failure to add the task (rare, but possible)
         logger.error(f"[KB {kb_id}] Failed to add background task: {task_err}", exc_info=True)
-        # Attempt to revert status to error
         db_kb.status = "error"
         db_kb.parsing_state = {"stage": "error", "message": "Failed to queue background task"}
         try:
             db.commit()
         except Exception:
-            db.rollback() # Rollback if status update fails
-        # Raise exception to signal API failure (500)
+            db.rollback() 
         raise HTTPException(status_code=500, detail=f"Failed to queue processing task for KB {kb_id}")
 
-    # 7. Return the KnowledgeBase object (now with status='processing')
+    # 7. 返回 (保持不变)
     return db_kb
-
 
 def cancel_kb_parsing(db: Session, kb_id: int) -> Optional[KnowledgeBase]:
     db_kb = crud_knowledgebase.get_kb(db, kb_id)

@@ -1,0 +1,1 @@
+{"graph_dict": {"fight": [["CALLS", "printf"]], "health": [["CALLS", "printf"]], "main": [["CALLS", "printf"], ["CALLS", "scanf"], ["CALLS", "fflush"], ["CALLS", "getchar"], ["CALLS", "fight"], ["CALLS", "health"], ["CALLS", "GetStdHandle"], ["CALLS", "GetConsoleMode"], ["CALLS", "SetConsoleMode"]]}}
