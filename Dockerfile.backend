@@ -1,17 +1,17 @@
-# 阶段 1: 使用官方 Python 镜像 (!! 修正：固定到 Debian 12 "Bookworm" !!)
+# 阶段 1: 使用官方 Python 镜像 (固定到 Debian 12 "Bookworm")
 FROM python:3.10-slim-bookworm
 
 # 设置工作目录
 WORKDIR /code
 
 # (!! 修正：安装 unrar !!)
-# 1. 在 /etc/apt/sources.list 中添加 "contrib" 和 "non-free"
+# 1. 在 /etc/apt/sources.list.d/ 目录中创建一个新文件来添加 non-free 仓库
 # 2. 更新 apt 列表
-# 3. 安装 unrar
+# 3. 安装 unrar (使用 --no-install-recommends 保持镜像精简)
 # 4. 清理缓存
-RUN sed -i 's/main/main contrib non-free/g' /etc/apt/sources.list \
+RUN echo "deb http://deb.debian.org/debian bookworm non-free" > /etc/apt/sources.list.d/non-free.list \
     && apt-get update \
-    && apt-get install -y unrar \
+    && apt-get install -y unrar --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制依赖文件
