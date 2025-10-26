@@ -1,0 +1,25 @@
+# Git
+.git
+.gitignore
+
+# CI/CD
+.github
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Node.js
+vue-knowledge-base/node_modules/
+vue-knowledge-base/dist/
+
+# 上传的文件 (!!重要!!)
+uploads/
+
+# IDE 和系统文件
+.vscode/
+.idea/
+*.DS_Store
