@@ -45,32 +45,26 @@ jobs:
   frontend-ci:
     runs-on: ubuntu-latest
     
-    # !! 关键修正：为所有 run 命令设置默认工作目录
     defaults:
       run:
-        working-directory: ./vue-knowledge-base #
+        working-directory: ./vue-knowledge-base
 
     steps:
     - name: 1. Checkout code
       uses: actions/checkout@v4
 
-    - name: 2. Set up Node.js (e.g., v20)
+    - name: 2. Set up Node.js (使用 20.x)
       uses: actions/setup-node@v4
       with:
         node-version: 20
         cache: 'npm'
-
         cache-dependency-path: vue-knowledge-base/package-lock.json 
 
     - name: 3. Install npm dependencies
       run: npm install 
 
-    # - name: 4. Lint with ESLint (代码风格检查)
-    #   run: npm run lint --if-present 
-
-    - name: 5. Build frontend (构建生产版本)
+    - name: 4. Build frontend (构建生产版本)
       run: npm run build --if-present 
-
   #---------------------------------------
   #  Job 3: Build Docker Images (CD)
   #---------------------------------------

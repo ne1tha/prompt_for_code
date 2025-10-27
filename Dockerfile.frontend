@@ -1,6 +1,6 @@
 # 阶段 1: 构建 (Build)
-# 使用 Node.js 镜像来构建 Vue 应用
-FROM node:18-alpine as builder
+# 使用 Node.js 20 镜像来构建 Vue 应用
+FROM node:20-alpine as builder
 
 # 设置工作目录为前端代码目录
 WORKDIR /app
